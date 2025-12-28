@@ -2,11 +2,15 @@ package upt.paam.lab7
 
 import android.Manifest
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -22,14 +26,26 @@ class MyForegroundService : Service() {
     private var counter = 0
     private val scope = CoroutineScope(Dispatchers.Default)
 
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            Log.e("ForegroundServiceDebug", "PERMISSION NOT GRANTED! Service is stopping itself.")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         isRunning = true
         counter = 0
 
-        val notification = buildNotification("Service started", 0)
+        val notification = buildNotification("Service started")
         startForeground(1, notification)
 
         startCounterLoop()
@@ -42,40 +58,52 @@ class MyForegroundService : Service() {
             while (isRunning) {
                 delay(1000)
                 counter++
-                updateNotification("Running for $counter sec", counter)
+                updateNotification("Running for $counter sec")
             }
         }
     }
 
-    private fun buildNotification(msg: String, progress: Int): Notification {
-        // TODO 2: Create a NotificationCompat.Builder inside your service
-        //   - Use "service_channel" as the channelId
-        //   - Set a title, text, and small icon
-        //   - Mark the notification as ongoing (persistent)`
-        return TODO("Provide the return value")
+    private fun buildNotification(msg: String): Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-        // TODO 3: Create a different notification with NotificationCompat.Builder inside your service
-        // that opens a certain screen when you press on it. Comment one implementation when you're done
+        return NotificationCompat.Builder(this, "service_channel")
+            .setContentTitle("Foreground Service")
+            .setContentText(msg)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
     }
-    private fun updateNotification(msg: String, progress: Int) {
-        val manager = NotificationManagerCompat.from(this)
-        val notification = buildNotification(msg, progress)
 
-        // Runtime permission check for Android 13+
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ActivityCompat.checkSelfPermission(
-                this,
-                android.Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            manager.notify(1, notification)
+    private fun updateNotification(msg: String) {
+        val manager = NotificationManagerCompat.from(this)
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            manager.notify(1, buildNotification(msg))
         }
     }
 
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "service_channel",
+                "Foreground Service Channel",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
 
     override fun onDestroy() {
         isRunning = false
         scope.cancel()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         super.onDestroy()
     }
 }
